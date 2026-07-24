@@ -108,6 +108,7 @@ export default function MapPage() {
   const nearSentRef = useRef(false);
   const deliveriesRef = useRef<Delivery[]>([]);
   const userPosRef = useRef<{ lat: number; lon: number } | null>(null);
+  const hasInitialGpsRef = useRef(false); // route rebuilt once real GPS arrives
   // Road geometry for simulation (fetched once per route)
   const roadCoordsRef = useRef<[number, number][]>([]);
 
@@ -291,6 +292,17 @@ export default function MapPage() {
     const p = { lat, lon };
     userPosRef.current = p;
 
+    // On first real GPS fix, rebuild route from actual position
+    // (initial draw may have used a fallback start point if GPS wasn't ready)
+    if (!hasInitialGpsRef.current && deliveriesRef.current.length > 0) {
+      hasInitialGpsRef.current = true;
+      const waypoints = buildWaypoints(deliveriesRef.current, p);
+      fetchRoadRoute(waypoints).then((coords) => {
+        roadCoordsRef.current = coords;
+        setRouteGeojson(coords);
+      }).catch(() => {});
+    }
+
     const map = mapRef.current;
     if (map) {
       if (!courierRef.current) {
@@ -321,7 +333,7 @@ export default function MapPage() {
         setNearDest(true);
       }
     }
-  }, []);
+  }, [setRouteGeojson]);
 
   // ── Simulation along road geometry ───────────────────────────────────────
   const runSimulation = useCallback(() => {

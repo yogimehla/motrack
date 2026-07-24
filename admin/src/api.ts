@@ -65,6 +65,10 @@ export interface Delivery {
   assigned_driver_id?: string;
   created_at?: string;
   updated_at?: string;
+  accepted_at?: string;
+  started_at?: string;
+  completed_at?: string;
+  fail_reason?: string;
 }
 
 export interface DashboardStats {

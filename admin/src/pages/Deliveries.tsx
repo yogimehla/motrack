@@ -173,6 +173,7 @@ export default function Deliveries() {
               <th className="px-4 py-3">Priority</th>
               <th className="px-4 py-3">COD</th>
               <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Dates</th>
               <th className="px-4 py-3">Assign Driver</th>
             </tr>
           </thead>
@@ -198,6 +199,41 @@ export default function Deliveries() {
                   <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGE[d.status] ?? 'bg-slate-100 text-slate-600'}`}>
                     {d.status}
                   </span>
+                  {d.fail_reason && (
+                    <div className="mt-1 text-xs text-rose-500 max-w-[140px] truncate" title={d.fail_reason}>
+                      {d.fail_reason}
+                    </div>
+                  )}
+                </td>
+                <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">
+                  {d.created_at && (
+                    <div>
+                      <span className="font-medium text-slate-400">Created: </span>
+                      {new Date(d.created_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
+                    </div>
+                  )}
+                  {d.deadline && (() => {
+                    const overdue = new Date(d.deadline) < new Date() && !['delivered','failed','returned'].includes(d.status);
+                    return (
+                      <div className={overdue ? 'text-rose-600 font-semibold' : ''}>
+                        <span className="font-medium text-slate-400">Deadline: </span>
+                        {new Date(d.deadline).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
+                        {overdue && ' ⚠'}
+                      </div>
+                    );
+                  })()}
+                  {d.started_at && (
+                    <div>
+                      <span className="font-medium text-slate-400">Started: </span>
+                      {new Date(d.started_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
+                    </div>
+                  )}
+                  {d.completed_at && (
+                    <div>
+                      <span className="font-medium text-slate-400">Done: </span>
+                      {new Date(d.completed_at).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <select
@@ -217,14 +253,14 @@ export default function Deliveries() {
             ))}
             {!loading && deliveries.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
                   No deliveries found.
                 </td>
               </tr>
             )}
             {loading && (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
+                <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
                   Loading…
                 </td>
               </tr>

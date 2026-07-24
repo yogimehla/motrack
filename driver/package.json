@@ -9,6 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/cli": "^6.2.1",
+    "@capacitor/core": "^6.2.1",
+    "@capacitor/geolocation": "^6.1.1",
+    "@capacitor/ios": "^6.2.1",
     "axios": "^1.7.9",
     "maplibre-gl": "^4.7.1",
     "react": "^18.3.1",

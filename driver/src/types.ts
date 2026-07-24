@@ -32,6 +32,9 @@ export interface Delivery {
   time_window?: string;
   status: DeliveryStatus;
   assigned_driver_id?: string;
+  fail_reason?: string;
+  completed_at?: string;
+  updated_at?: string;
 }
 
 export interface User {
