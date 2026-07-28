@@ -53,6 +53,7 @@ const feedbackSchema = z.object({
 const optimizeSchema = z.object({
   delivery_ids: z.array(z.number().int()).min(1),
   start: z.object({ lat: z.number(), lon: z.number() }),
+  end: z.object({ lat: z.number(), lon: z.number() }).optional(),
 });
 
 function insertDelivery(o: IncomingOrder & { source?: string }, extra: Partial<Record<string, unknown>> = {}) {
@@ -287,7 +288,7 @@ deliveriesRoutes.post('/bulk', requireRole('dispatcher', 'admin'), async (c) => 
 deliveriesRoutes.post('/optimize', async (c) => {
   const parsed = optimizeSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return fail(c, 'Body: {delivery_ids: number[], start: {lat, lon}}');
-  const { delivery_ids, start } = parsed.data;
+  const { delivery_ids, start, end } = parsed.data;
   const placeholders = delivery_ids.map(() => '?').join(',');
   const rows = db
     .prepare(`SELECT id, dropoff_lat, dropoff_lon FROM deliveries WHERE id IN (${placeholders})`)
@@ -296,7 +297,8 @@ deliveriesRoutes.post('/optimize', async (c) => {
   if (missing.length) return fail(c, `Unknown delivery ids: ${missing.join(', ')}`, 404);
   const result = optimizer.optimize(
     rows.map((r) => ({ id: r.id, lat: r.dropoff_lat, lon: r.dropoff_lon })),
-    start
+    start,
+    end
   );
   return ok(c, { ...result, optimizer: optimizer.name });
 });

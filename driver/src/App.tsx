@@ -4,6 +4,7 @@ import Queue from './pages/Queue';
 import MapPage from './pages/MapPage';
 import Regions from './pages/Regions';
 import Profile from './pages/Profile';
+import Notifications from './pages/Notifications';
 import TabBar from './components/TabBar';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/" element={<RequireAuth><Queue /></RequireAuth>} />
           <Route path="/map" element={<RequireAuth><MapPage /></RequireAuth>} />
           <Route path="/regions" element={<RequireAuth><Regions /></RequireAuth>} />
+          <Route path="/notifications" element={<RequireAuth><Notifications /></RequireAuth>} />
           <Route path="/profile" element={<RequireAuth><Profile /></RequireAuth>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

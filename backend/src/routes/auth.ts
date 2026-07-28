@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { authProvider } from '../adapters/auth/index.js';
+import { db, publicUser, type UserRow } from '../db.js';
 import { fail, getUser, ok, requireAuth } from '../http.js';
 
 const registerSchema = z.object({
@@ -52,3 +53,23 @@ authRoutes.post('/refresh', requireAuth, (c) => {
 });
 
 authRoutes.get('/me', requireAuth, (c) => ok(c, getUser(c)));
+
+// Update the caller's own profile — currently just the home / route end point.
+const endPointSchema = z.object({
+  end_address: z.string().min(1),
+  end_lat: z.number().gte(-90).lte(90),
+  end_lon: z.number().gte(-180).lte(180),
+  end_plus_code: z.string().optional(),
+});
+
+authRoutes.patch('/me', requireAuth, async (c) => {
+  const parsed = endPointSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return fail(c, parsed.error.issues.map((i) => i.message).join('; '));
+  const { end_address, end_lat, end_lon, end_plus_code } = parsed.data;
+  const id = getUser(c).id;
+  db.prepare(
+    'UPDATE users SET end_lat = ?, end_lon = ?, end_address = ?, end_plus_code = ? WHERE id = ?',
+  ).run(end_lat, end_lon, end_address, end_plus_code ?? null, id);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow;
+  return ok(c, publicUser(user));
+});

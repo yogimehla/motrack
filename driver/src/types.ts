@@ -44,6 +44,10 @@ export interface User {
   role: string;
   tier?: 'free' | 'pro' | string;
   deliveries_today?: number;
+  end_address?: string | null;
+  end_lat?: number | null;
+  end_lon?: number | null;
+  end_plus_code?: string | null;
 }
 
 export interface Region {
@@ -52,4 +56,14 @@ export interface Region {
   version?: number | string;
   size_mb?: number;
   bounds?: number[];
+  created_at?: string;
+}
+
+export interface Notification {
+  id: number;
+  user_id: number | null;
+  title: string;
+  body: string;
+  read: number | boolean;
+  created_at: string;
 }

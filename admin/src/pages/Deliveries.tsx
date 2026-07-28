@@ -119,6 +119,18 @@ export default function Deliveries() {
 
   const selectedCount = useMemo(() => selected.size, [selected]);
 
+  // Most-recent first: newest created_at at the top (id as a stable tiebreaker).
+  const sortedDeliveries = useMemo(
+    () =>
+      [...deliveries].sort((a, b) => {
+        const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+        if (tb !== ta) return tb - ta;
+        return Number(b.id) - Number(a.id);
+      }),
+    [deliveries],
+  );
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -178,7 +190,7 @@ export default function Deliveries() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {deliveries.map((d) => (
+            {sortedDeliveries.map((d) => (
               <tr key={d.id} className="hover:bg-slate-50/60">
                 <td className="px-4 py-3">
                   <input

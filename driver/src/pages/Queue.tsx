@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api, asList, errorMessage, unwrap } from '../api';
-import type { Delivery } from '../types';
+import type { Delivery, User } from '../types';
 import CompleteModal from '../components/CompleteModal';
 import FailModal from '../components/FailModal';
 
@@ -12,6 +13,13 @@ function priorityBadge(p: number) {
   if (p >= 8) return 'bg-red-100 text-red-700 ring-1 ring-red-200';
   if (p >= 5) return 'bg-amber-100 text-amber-700 ring-1 ring-amber-200';
   return 'bg-slate-100 text-slate-600';
+}
+
+/** Left accent bar colour by priority. */
+function priorityBar(p: number) {
+  if (p >= 8) return 'bg-red-500';
+  if (p >= 5) return 'bg-amber-400';
+  return 'bg-slate-300';
 }
 
 function statusStyle(s: string) {
@@ -53,6 +61,8 @@ export default function Queue() {
   const [failing, setFailing] = useState<Delivery | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [optimizing, setOptimizing] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [searchQueue, setSearchQueue] = useState('');
   const [searchDone, setSearchDone] = useState('');
   const [donePage, setDonePage] = useState(1);
@@ -66,6 +76,7 @@ export default function Queue() {
       const list = asList<Delivery>(unwrap(res));
       list.sort((a, b) => b.priority - a.priority);
       setDeliveries(list);
+      setLastUpdated(Date.now());
       setError('');
     } catch (err) {
       setError(errorMessage(err));
@@ -75,6 +86,26 @@ export default function Queue() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Auto-refresh: poll every 25s (silent — the big spinner only shows on first load)
+  // and refresh when the driver returns to the app, so new assignments appear on their own.
+  useEffect(() => {
+    const t = setInterval(load, 25000);
+    const onFocus = () => { if (!document.hidden) load(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [load]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  };
 
   const act = async (d: Delivery, action: 'accept' | 'start') => {
     setBusyId(d.id);
@@ -120,7 +151,19 @@ export default function Queue() {
           { timeout: 4000 },
         );
       });
-      const res = await api.post('/deliveries/optimize', { delivery_ids: active.map((d) => d.id), start });
+      // Driver's saved home / end point — route returns here when set.
+      let end: { lat: number; lon: number } | undefined;
+      try {
+        const me = unwrap<User>(await api.get('/auth/me'));
+        if (typeof me.end_lat === 'number' && typeof me.end_lon === 'number') {
+          end = { lat: me.end_lat, lon: me.end_lon };
+        }
+      } catch { /* optimize without a return leg */ }
+      const res = await api.post('/deliveries/optimize', {
+        delivery_ids: active.map((d) => d.id),
+        start,
+        ...(end ? { end } : {}),
+      });
       const data = unwrap<{ order?: unknown[]; legs?: unknown[]; total_km?: number }>(res);
       const orderedIds = ((data.order || []) as unknown[]).map((o) =>
         typeof o === 'string' || typeof o === 'number' ? String(o) : String((o as { id?: string }).id),
@@ -162,73 +205,129 @@ export default function Queue() {
   const totalPages = Math.max(1, Math.ceil(filteredDone.length / DONE_PAGE_SIZE));
   const pagedDone = filteredDone.slice((donePage - 1) * DONE_PAGE_SIZE, donePage * DONE_PAGE_SIZE);
 
-  const renderActiveCard = (d: Delivery) => (
-    <div key={d.id} className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
-      {/* Coloured top stripe by priority */}
-      <div className={`h-1 w-full ${d.priority >= 8 ? 'bg-red-500' : d.priority >= 5 ? 'bg-amber-400' : 'bg-slate-300'}`} />
-      <div className="p-4">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <p className="truncate font-bold text-slate-800">{d.customer_name}</p>
-            <p className="mt-0.5 truncate text-sm text-slate-500">{d.dropoff.address}</p>
+  const navigate = useNavigate();
+
+  // 1-based stop order from the last Optimize run — shows a "Stop N" chip on cards.
+  const optimizedOrder = useMemo(() => {
+    const m = new Map<string, number>();
+    try {
+      const cache = JSON.parse(sessionStorage.getItem('optimizedRoute') || 'null') as
+        | { stopIds?: string[] }
+        | null;
+      (cache?.stopIds || []).forEach((id, i) => m.set(String(id), i + 1));
+    } catch { /* ignore */ }
+    return m;
+  }, [deliveries]);
+
+  const searchValue = tab === 'queue' ? searchQueue : searchDone;
+  const onSearchChange = (v: string) => {
+    if (tab === 'queue') setSearchQueue(v);
+    else { setSearchDone(v); setDonePage(1); }
+  };
+
+  const renderActiveCard = (d: Delivery) => {
+    const stopNo = optimizedOrder.get(d.id);
+    const started = ['picked_up', 'in_transit', 'near_destination'].includes(d.status);
+    const prefix = d.status === 'assigned' || d.status === 'driver_accepted'; // heading to pickup first
+    return (
+      <div key={d.id} className="flex overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+        {/* Priority accent bar */}
+        <div className={`w-1.5 shrink-0 ${priorityBar(d.priority)}`} />
+        <div className="min-w-0 flex-1 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                {stopNo != null && (
+                  <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-indigo-600 px-1 text-[11px] font-bold text-white">
+                    {stopNo}
+                  </span>
+                )}
+                <p className="truncate text-base font-bold text-slate-900">{d.customer_name}</p>
+              </div>
+              <div className="mt-1 flex items-start gap-1.5 text-sm text-slate-500">
+                <span className="mt-0.5 shrink-0">📍</span>
+                <span className="line-clamp-2">
+                  {prefix && <span className="font-medium text-slate-400">Pickup: </span>}
+                  {prefix ? d.pickup.address : d.dropoff.address}
+                </span>
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-2">
+              <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${priorityBadge(d.priority)}`}>
+                P{d.priority}
+              </span>
+              {d.customer_phone && (
+                <a
+                  href={`tel:${d.customer_phone}`}
+                  aria-label={`Call ${d.customer_name}`}
+                  className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200 active:scale-95"
+                >
+                  📞
+                </a>
+              )}
+            </div>
           </div>
-          <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold ${priorityBadge(d.priority)}`}>
-            P{d.priority}
-          </span>
-        </div>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusStyle(d.status)}`}>
-            {d.status.replace(/_/g, ' ')}
-          </span>
-          {d.cod_amount != null && d.cod_amount > 0 && (
-            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
-              COD ₹{d.cod_amount}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusStyle(d.status)}`}>
+              {d.status.replace(/_/g, ' ')}
             </span>
-          )}
-          {d.deadline && <Countdown deadline={d.deadline} />}
-        </div>
+            {d.cod_amount != null && d.cod_amount > 0 && (
+              <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                COD ₹{d.cod_amount}
+              </span>
+            )}
+            {d.deadline && <Countdown deadline={d.deadline} />}
+          </div>
 
-        <div className="mt-4 flex gap-2">
-          {d.status === 'assigned' && (
-            <button
-              onClick={() => act(d, 'accept')}
-              disabled={busyId === d.id}
-              className="min-h-[48px] flex-1 rounded-xl bg-indigo-600 font-semibold text-white shadow-sm active:scale-95 disabled:opacity-50"
-            >
-              {busyId === d.id ? 'Accepting…' : 'Accept'}
-            </button>
-          )}
-          {d.status === 'driver_accepted' && (
-            <button
-              onClick={() => act(d, 'start')}
-              disabled={busyId === d.id}
-              className="min-h-[48px] flex-1 rounded-xl bg-violet-600 font-semibold text-white shadow-sm active:scale-95 disabled:opacity-50"
-            >
-              {busyId === d.id ? 'Starting…' : 'Start pickup'}
-            </button>
-          )}
-          {['picked_up', 'in_transit', 'near_destination'].includes(d.status) && (
-            <>
+          <div className="mt-4 flex gap-2">
+            {d.status === 'assigned' && (
               <button
-                onClick={() => setCompleting(d)}
-                className="min-h-[48px] flex-1 rounded-xl bg-emerald-600 font-semibold text-white shadow-sm active:scale-95"
-              >
-                Complete
-              </button>
-              <button
-                onClick={() => setFailing(d)}
+                onClick={() => act(d, 'accept')}
                 disabled={busyId === d.id}
-                className="min-h-[48px] flex-1 rounded-xl border border-red-200 bg-red-50 font-semibold text-red-600 active:scale-95 disabled:opacity-50"
+                className="min-h-[48px] flex-1 rounded-xl bg-indigo-600 font-semibold text-white shadow-sm active:scale-95 disabled:opacity-50"
               >
-                Fail
+                {busyId === d.id ? 'Accepting…' : 'Accept'}
               </button>
-            </>
-          )}
+            )}
+            {d.status === 'driver_accepted' && (
+              <button
+                onClick={() => act(d, 'start')}
+                disabled={busyId === d.id}
+                className="min-h-[48px] flex-1 rounded-xl bg-violet-600 font-semibold text-white shadow-sm active:scale-95 disabled:opacity-50"
+              >
+                {busyId === d.id ? 'Starting…' : 'Start pickup'}
+              </button>
+            )}
+            {started && (
+              <>
+                <button
+                  onClick={() => setCompleting(d)}
+                  className="min-h-[48px] flex-1 rounded-xl bg-emerald-600 font-semibold text-white shadow-sm active:scale-95"
+                >
+                  Complete
+                </button>
+                <button
+                  onClick={() => setFailing(d)}
+                  disabled={busyId === d.id}
+                  className="min-h-[48px] flex-1 rounded-xl border border-red-200 bg-red-50 font-semibold text-red-600 active:scale-95 disabled:opacity-50"
+                >
+                  Fail
+                </button>
+              </>
+            )}
+            <button
+              onClick={() => navigate('/map')}
+              aria-label="Open on map"
+              className="flex min-h-[48px] w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-lg text-slate-600 active:scale-95"
+            >
+              🗺
+            </button>
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderDoneCard = (d: Delivery) => {
     const closedAt = d.completed_at || d.updated_at;
@@ -270,61 +369,35 @@ export default function Queue() {
     <div className="min-h-screen bg-slate-50 pb-24">
       {/* Header */}
       <div className="sticky top-0 z-20 bg-white shadow-sm">
-        <div className="flex items-center justify-between gap-2 px-4 pb-2 pt-4">
-          <div>
-            <h1 className="text-lg font-bold text-slate-800">Deliveries</h1>
-            <p className="text-xs text-slate-500">{active.length} active · {allDone.length} closed</p>
+        {/* Title row */}
+        <div className="flex items-start justify-between gap-2 px-4 pt-4">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold text-slate-900">Deliveries</h1>
+            <p className="mt-0.5 truncate text-xs text-slate-400">
+              {active.length} active · {allDone.length} closed
+              {lastUpdated &&
+                ` · updated ${new Date(lastUpdated).toLocaleTimeString(undefined, {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}`}
+            </p>
           </div>
-          {tab === 'queue' && (
-            <button
-              onClick={optimize}
-              disabled={optimizing || loading}
-              className="flex items-center gap-1.5 rounded-xl bg-slate-800 px-4 py-2.5 text-sm font-semibold text-white shadow disabled:opacity-50 active:scale-95"
-            >
-              <span>{optimizing ? '⏳' : '🗺'}</span>
-              {optimizing ? 'Optimizing…' : 'Optimize'}
-            </button>
-          )}
-          {tab === 'queue' && active.length > 0 && (
-            <div className="flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2">
-              <span className="text-slate-400 text-sm">🔍</span>
-              <input
-                type="text"
-                value={searchQueue}
-                onChange={(e) => setSearchQueue(e.target.value)}
-                placeholder="Search…"
-                className="w-24 bg-transparent text-sm text-slate-700 placeholder-slate-400 outline-none"
-              />
-              {searchQueue && (
-                <button onClick={() => setSearchQueue('')} className="text-slate-400 text-xs">✕</button>
-              )}
-            </div>
-          )}
-          {tab === 'closed' && (
-            <div className="flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2">
-              <span className="text-slate-400 text-sm">🔍</span>
-              <input
-                type="text"
-                value={searchDone}
-                onChange={(e) => { setSearchDone(e.target.value); setDonePage(1); }}
-                placeholder="Search…"
-                className="w-28 bg-transparent text-sm text-slate-700 placeholder-slate-400 outline-none"
-              />
-              {searchDone && (
-                <button onClick={() => setSearchDone('')} className="text-slate-400 text-xs">✕</button>
-              )}
-            </div>
-          )}
+          <button
+            onClick={refresh}
+            disabled={refreshing || loading}
+            aria-label="Refresh deliveries"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-lg text-slate-500 active:scale-90 active:bg-slate-100 disabled:opacity-50"
+          >
+            <span className={refreshing ? 'inline-block animate-spin' : ''}>🔄</span>
+          </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-slate-200">
+        <div className="mt-3 flex border-b border-slate-200">
           <button
             onClick={() => setTab('queue')}
             className={`flex flex-1 items-center justify-center gap-2 py-3 text-sm font-semibold transition-colors ${
-              tab === 'queue'
-                ? 'border-b-2 border-indigo-600 text-indigo-600'
-                : 'text-slate-500'
+              tab === 'queue' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-slate-500'
             }`}
           >
             Queue
@@ -337,9 +410,7 @@ export default function Queue() {
           <button
             onClick={() => setTab('closed')}
             className={`flex flex-1 items-center justify-center gap-2 py-3 text-sm font-semibold transition-colors ${
-              tab === 'closed'
-                ? 'border-b-2 border-indigo-600 text-indigo-600'
-                : 'text-slate-500'
+              tab === 'closed' ? 'border-b-2 border-indigo-600 text-indigo-600' : 'text-slate-500'
             }`}
           >
             Completed / Closed
@@ -349,6 +420,35 @@ export default function Queue() {
               </span>
             )}
           </button>
+        </div>
+
+        {/* Search + Optimize */}
+        <div className="flex items-center gap-2 px-4 py-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl bg-slate-100 px-3 py-2.5">
+            <span className="text-sm text-slate-400">🔍</span>
+            <input
+              type="text"
+              value={searchValue}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Search customer or address…"
+              className="min-w-0 flex-1 bg-transparent text-sm text-slate-700 placeholder-slate-400 outline-none"
+            />
+            {searchValue && (
+              <button onClick={() => onSearchChange('')} aria-label="Clear search" className="text-sm text-slate-400">
+                ✕
+              </button>
+            )}
+          </div>
+          {tab === 'queue' && (
+            <button
+              onClick={optimize}
+              disabled={optimizing || loading || active.length < 2}
+              className="flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white shadow active:scale-95 disabled:opacity-50"
+            >
+              <span>{optimizing ? '⏳' : '🗺'}</span>
+              {optimizing ? '…' : 'Optimize'}
+            </button>
+          )}
         </div>
       </div>
 

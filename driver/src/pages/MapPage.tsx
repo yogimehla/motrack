@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { api, asList, unwrap } from '../api';
-import type { Delivery } from '../types';
+import type { Delivery, Region, User } from '../types';
 
 const ACTIVE_STATUSES = ['assigned', 'driver_accepted', 'picked_up', 'in_transit', 'near_destination'];
 
@@ -21,10 +21,11 @@ function haversineM(a: { lat: number; lon: number }, b: { lat: number; lon: numb
   return 2 * R * Math.asin(Math.sqrt(s));
 }
 
-/** Returns ordered [lon, lat] waypoints for OSRM: pos → pickup1 → dropoff1 → … */
+/** Returns ordered [lon, lat] waypoints for OSRM: pos → pickup1 → dropoff1 → … → home */
 function buildWaypoints(
   list: Delivery[],
   pos?: { lat: number; lon: number } | null,
+  end?: { lat: number; lon: number } | null,
 ): [number, number][] {
   const active = list.filter((d) => ACTIVE_STATUSES.includes(d.status));
   let ordered: Delivery[] = active;
@@ -48,6 +49,8 @@ function buildWaypoints(
     }
     coords.push([d.dropoff.lon, d.dropoff.lat]);
   }
+  // Return to the driver's home / end point last.
+  if (end && coords.length > 0) coords.push([end.lon, end.lat]);
   return coords;
 }
 
@@ -113,13 +116,50 @@ export default function MapPage() {
   const roadCoordsRef = useRef<[number, number][]>([]);
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
+  const [endPoint, setEndPoint] = useState<{ lat: number; lon: number; address: string } | null>(null);
+  const endPointRef = useRef(endPoint);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [navigating, setNavigating] = useState(false);
   const [maneuver, setManeuver] = useState('');
   const [nearDest, setNearDest] = useState(false);
   const [routeError, setRouteError] = useState('');
+  const [mapMeta, setMapMeta] = useState<{ name: string; version?: number | string; updated?: string } | null>(null);
 
   useEffect(() => { deliveriesRef.current = deliveries; }, [deliveries]);
+  useEffect(() => { endPointRef.current = endPoint; }, [endPoint]);
+
+  // Driver's saved home / end point — the route returns here as its final leg.
+  useEffect(() => {
+    api
+      .get('/auth/me')
+      .then((res) => {
+        const me = unwrap<User>(res);
+        if (typeof me.end_lat === 'number' && typeof me.end_lon === 'number') {
+          setEndPoint({ lat: me.end_lat, lon: me.end_lon, address: me.end_address || 'Home' });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Map-data freshness — the region bundle covering the current view (name/version/updated).
+  useEffect(() => {
+    const [cLon, cLat] = [76.78, 30.73]; // map default center
+    const contains = (r: Region) =>
+      Array.isArray(r.bounds) &&
+      r.bounds.length === 4 &&
+      cLat >= r.bounds[0] &&
+      cLat <= r.bounds[2] &&
+      cLon >= r.bounds[1] &&
+      cLon <= r.bounds[3];
+    api
+      .get('/regions')
+      .then((res) => {
+        const list = asList<Region>(unwrap(res));
+        const r = list.find(contains) ?? list[0];
+        if (r) setMapMeta({ name: r.name, version: r.version, updated: r.created_at });
+      })
+      .catch(() => {});
+  }, []);
 
   // ── GeoJSON source helpers ───────────────────────────────────────────────
   const setRouteGeojson = useCallback((coords: [number, number][]) => {
@@ -259,6 +299,20 @@ export default function MapPage() {
       );
     }
 
+    // Home / end-point marker — the route returns here as its final leg.
+    if (endPoint) {
+      const homeEl = makeEl(
+        'font-size:26px;line-height:1;filter:drop-shadow(0 2px 3px rgba(0,0,0,.45))',
+        '🏠',
+      );
+      markersRef.current.push(
+        new maplibregl.Marker({ element: homeEl, anchor: 'bottom' })
+          .setLngLat([endPoint.lon, endPoint.lat])
+          .setPopup(new maplibregl.Popup({ offset: 20 }).setText(`Home: ${endPoint.address}`))
+          .addTo(map),
+      );
+    }
+
     // Fit bounds
     if (active.length > 0) {
       const bounds = new maplibregl.LngLatBounds();
@@ -268,11 +322,12 @@ export default function MapPage() {
         }
         bounds.extend([d.dropoff.lon, d.dropoff.lat]);
       }
+      if (endPoint) bounds.extend([endPoint.lon, endPoint.lat]);
       map.fitBounds(bounds, { padding: 60, maxZoom: 15, duration: 800 });
     }
 
     // Fetch road route
-    const waypoints = buildWaypoints(deliveries, userPosRef.current);
+    const waypoints = buildWaypoints(deliveries, userPosRef.current, endPoint);
     setRouteError('');
     fetchRoadRoute(waypoints)
       .then((roadCoords) => {
@@ -285,7 +340,7 @@ export default function MapPage() {
         setRouteGeojson(waypoints);
         setRouteError('Road routing unavailable — showing straight lines');
       });
-  }, [deliveries, mapLoaded, setRouteGeojson]);
+  }, [deliveries, endPoint, mapLoaded, setRouteGeojson]);
 
   // ── Position update (real GPS or simulation) ─────────────────────────────
   const onPosition = useCallback((lat: number, lon: number) => {
@@ -296,7 +351,7 @@ export default function MapPage() {
     // (initial draw may have used a fallback start point if GPS wasn't ready)
     if (!hasInitialGpsRef.current && deliveriesRef.current.length > 0) {
       hasInitialGpsRef.current = true;
-      const waypoints = buildWaypoints(deliveriesRef.current, p);
+      const waypoints = buildWaypoints(deliveriesRef.current, p, endPointRef.current);
       fetchRoadRoute(waypoints).then((coords) => {
         roadCoordsRef.current = coords;
         setRouteGeojson(coords);
@@ -339,7 +394,7 @@ export default function MapPage() {
   const runSimulation = useCallback(() => {
     const coords = roadCoordsRef.current.length >= 2
       ? roadCoordsRef.current
-      : buildWaypoints(deliveriesRef.current, userPosRef.current);
+      : buildWaypoints(deliveriesRef.current, userPosRef.current, endPointRef.current);
     if (coords.length < 2) return;
 
     const SEG_MS = 800; // faster per-segment for road (many small segments)
@@ -392,7 +447,7 @@ export default function MapPage() {
 
     const beginNav = (startPos?: { lat: number; lon: number }) => {
       // Re-fetch road route from current position
-      const waypoints = buildWaypoints(deliveriesRef.current, startPos ?? null);
+      const waypoints = buildWaypoints(deliveriesRef.current, startPos ?? null, endPointRef.current);
       fetchRoadRoute(waypoints)
         .then((roadCoords) => {
           roadCoordsRef.current = roadCoords;
@@ -457,6 +512,19 @@ export default function MapPage() {
         </div>
       )}
       <div ref={mapEl} className="flex-1" />
+      {mapMeta && (
+        <div className="absolute bottom-36 left-3 z-30 max-w-[75%] rounded-lg bg-white/85 px-2.5 py-1 text-[11px] font-medium text-slate-600 shadow-sm backdrop-blur-sm">
+          <span className="mr-1">🗺</span>
+          {mapMeta.name}
+          {mapMeta.version != null && ` · v${mapMeta.version}`}
+          {mapMeta.updated &&
+            ` · updated ${new Date(mapMeta.updated).toLocaleDateString(undefined, {
+              day: '2-digit',
+              month: 'short',
+              year: 'numeric',
+            })}`}
+        </div>
+      )}
       <div className="absolute bottom-20 left-3 right-3 z-30">
         <button
           onClick={navigating ? stopNav : startNav}

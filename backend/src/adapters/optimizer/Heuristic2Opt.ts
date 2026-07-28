@@ -3,28 +3,48 @@ import type { IOptimizer, Leg, OptimizeResult, Point, Stop } from './IOptimizer.
 
 /**
  * ACTIVE optimizer: pure-TypeScript nearest-neighbor construction + 2-opt
- * improvement over a haversine distance matrix. Open path (no return to start).
+ * improvement over a haversine distance matrix. Open path by default; when an
+ * `end` point is given the route is closed at that fixed terminal (return-to-home)
+ * and the ordering + total account for the final leg back to `end`.
  */
 export class Heuristic2Opt implements IOptimizer {
   readonly name = 'heuristic-2opt';
 
-  optimize(stops: Stop[], start: Point): OptimizeResult {
-    if (stops.length === 0) return { order: [], legs: [], total_km: 0 };
+  optimize(stops: Stop[], start: Point, end?: Point): OptimizeResult {
+    const returnKm = (from: Point): number =>
+      end ? haversineKm(from.lat, from.lon, end.lat, end.lon) : 0;
+
+    if (stops.length === 0) {
+      if (!end) return { order: [], legs: [], total_km: 0 };
+      const km = returnKm(start);
+      return { order: [], legs: [{ from: 'start', to: 'end', km: round2(km) }], total_km: round2(km) };
+    }
     if (stops.length === 1) {
       const km = haversineKm(start.lat, start.lon, stops[0].lat, stops[0].lon);
-      return { order: [stops[0].id], legs: [{ from: 'start', to: stops[0].id, km }], total_km: km };
+      const legs: Leg[] = [{ from: 'start', to: stops[0].id, km: round2(km) }];
+      let total = km;
+      if (end) {
+        const rk = returnKm(stops[0]);
+        legs.push({ from: stops[0].id, to: 'end', km: round2(rk) });
+        total += rk;
+      }
+      return { order: [stops[0].id], legs, total_km: round2(total) };
     }
 
-    // Distance matrix. Index 0 = start, 1..n = stops.
+    // Distance matrix. Index 0 = start, 1..n = stops, n+1 = end (when present).
     const n = stops.length;
+    const hasEnd = !!end;
+    const endIdx = n + 1;
     const pts = [start, ...stops.map((s) => ({ lat: s.lat, lon: s.lon }))];
-    const dist: number[][] = Array.from({ length: n + 1 }, (_, i) =>
-      Array.from({ length: n + 1 }, (_, j) =>
+    if (end) pts.push({ lat: end.lat, lon: end.lon });
+    const size = pts.length;
+    const dist: number[][] = Array.from({ length: size }, (_, i) =>
+      Array.from({ length: size }, (_, j) =>
         i === j ? 0 : haversineKm(pts[i].lat, pts[i].lon, pts[j].lat, pts[j].lon)
       )
     );
 
-    // Nearest neighbor from start (open route).
+    // Nearest neighbor from start (over stops only).
     const route: number[] = []; // indices into stops (1..n)
     const used = new Array(n + 1).fill(false);
     let cur = 0;
@@ -49,10 +69,12 @@ export class Heuristic2Opt implements IOptimizer {
         d += dist[prev][idx];
         prev = idx;
       }
+      if (hasEnd) d += dist[prev][endIdx]; // return leg to home
       return d;
     };
 
-    // 2-opt improvement (open path: reverse segment, keep start fixed).
+    // 2-opt improvement. Start is fixed at index 0; when hasEnd, the terminal
+    // after the last stop is `endIdx` (fixed), so ordering minimises the round trip.
     let improved = true;
     let guard = 0;
     while (improved && guard < 100) {
@@ -63,7 +85,7 @@ export class Heuristic2Opt implements IOptimizer {
           const a = i === 0 ? 0 : route[i - 1];
           const b = route[i];
           const c = route[k];
-          const dNode = k === route.length - 1 ? -1 : route[k + 1];
+          const dNode = k === route.length - 1 ? (hasEnd ? endIdx : -1) : route[k + 1];
           const before = dist[a][b] + (dNode === -1 ? 0 : dist[c][dNode]);
           const after = dist[a][c] + (dNode === -1 ? 0 : dist[b][dNode]);
           if (after < before - 1e-9) {
@@ -89,6 +111,7 @@ export class Heuristic2Opt implements IOptimizer {
       prev = idx;
       prevId = stops[idx - 1].id;
     }
+    if (hasEnd) legs.push({ from: prevId, to: 'end', km: round2(dist[prev][endIdx]) });
     return {
       order: route.map((i) => stops[i - 1].id),
       legs,

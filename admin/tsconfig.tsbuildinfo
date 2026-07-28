@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/layout.tsx","./src/api.ts","./src/main.tsx","./src/mapstyle.ts","./src/toast.tsx","./src/pages/dashboard.tsx","./src/pages/deliveries.tsx","./src/pages/drivers.tsx","./src/pages/feedback.tsx","./src/pages/login.tsx","./src/pages/newdelivery.tsx","./src/pages/regions.tsx","./vite.config.ts"],"version":"5.9.3"}

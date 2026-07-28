@@ -23,5 +23,10 @@ export interface OptimizeResult {
 
 export interface IOptimizer {
   readonly name: string;
-  optimize(stops: Stop[], start: Point): OptimizeResult;
+  /**
+   * Order `stops` starting from `start`. When `end` is given the route is
+   * closed at that fixed terminal (return-to-home) and a final `to: 'end'`
+   * leg is appended; otherwise the route is left open at the last stop.
+   */
+  optimize(stops: Stop[], start: Point, end?: Point): OptimizeResult;
 }

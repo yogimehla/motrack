@@ -94,6 +94,22 @@ CREATE TABLE IF NOT EXISTS order_events (
 );
 `);
 
+// ── Idempotent migrations ──────────────────────────────────────────────────
+// CREATE TABLE IF NOT EXISTS above does not alter pre-existing tables, so add
+// any missing columns here. Each is nullable → safe to add to a populated DB.
+function addColumnIfMissing(table: string, column: string, ddl: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  }
+}
+
+// Driver home / route end point (see Profile → end point picker).
+addColumnIfMissing('users', 'end_lat', 'REAL');
+addColumnIfMissing('users', 'end_lon', 'REAL');
+addColumnIfMissing('users', 'end_address', 'TEXT');
+addColumnIfMissing('users', 'end_plus_code', 'TEXT');
+
 export interface UserRow {
   id: number;
   email: string;
@@ -103,6 +119,10 @@ export interface UserRow {
   tier: 'free' | 'pro';
   phone: string | null;
   created_at: string;
+  end_lat: number | null;
+  end_lon: number | null;
+  end_address: string | null;
+  end_plus_code: string | null;
 }
 
 export function publicUser(u: UserRow) {

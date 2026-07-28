@@ -5,7 +5,7 @@ import type { IOptimizer, OptimizeResult, Point, Stop } from './IOptimizer.js';
  */
 export class NLPEnterprise implements IOptimizer {
   readonly name = 'nlp-enterprise';
-  optimize(_stops: Stop[], _start: Point): OptimizeResult {
+  optimize(_stops: Stop[], _start: Point, _end?: Point): OptimizeResult {
     throw Object.assign(new Error('NLPEnterprise is a V3 stub'), { status: 501 });
   }
 }

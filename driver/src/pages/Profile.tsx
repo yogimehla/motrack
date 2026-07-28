@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, asList, unwrap } from '../api';
 import type { Delivery, User } from '../types';
+import EndPointPicker from '../components/EndPointPicker';
 
 const FREE_TIER_DAILY_LIMIT = 10;
 
@@ -83,6 +84,8 @@ export default function Profile() {
           </p>
         )}
       </div>
+
+      {user && <EndPointPicker user={user} onSaved={setUser} />}
 
       <button
         onClick={logout}
