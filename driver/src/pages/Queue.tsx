@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { api, asList, errorMessage, unwrap } from '../api';
 import type { Delivery, User } from '../types';
 import CompleteModal from '../components/CompleteModal';
 import FailModal from '../components/FailModal';
+import DetailModal from '../components/DetailModal';
 
 const ACTIVE_STATUSES = ['assigned', 'driver_accepted', 'picked_up', 'in_transit', 'near_destination'];
 const DONE_PAGE_SIZE = 5;
@@ -53,12 +54,14 @@ function Countdown({ deadline }: { deadline: string }) {
 }
 
 export default function Queue() {
+  const location = useLocation();
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [completing, setCompleting] = useState<Delivery | null>(null);
   const [failing, setFailing] = useState<Delivery | null>(null);
+  const [viewing, setViewing] = useState<Delivery | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [optimizing, setOptimizing] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -69,6 +72,13 @@ export default function Queue() {
   const [tab, setTab] = useState<Tab>('queue');
 
   useEffect(() => { window.scrollTo({ top: 0 }); }, [tab]);
+
+  // Refresh queue when returning from deep link (accepted delivery)
+  useEffect(() => {
+    if (location.state?.refreshQueue) {
+      load();
+    }
+  }, [location.state?.refreshQueue]);
 
   const load = useCallback(async () => {
     try {
@@ -160,7 +170,7 @@ export default function Queue() {
         }
       } catch { /* optimize without a return leg */ }
       const res = await api.post('/deliveries/optimize', {
-        delivery_ids: active.map((d) => d.id),
+        delivery_ids: active.map((d) => d.order_id || d.id),
         start,
         ...(end ? { end } : {}),
       });
@@ -168,7 +178,8 @@ export default function Queue() {
       const orderedIds = ((data.order || []) as unknown[]).map((o) =>
         typeof o === 'string' || typeof o === 'number' ? String(o) : String((o as { id?: string }).id),
       );
-      const byId = new Map(deliveries.map((d) => [d.id, d]));
+      // Map by order_id first, fallback to id
+      const byId = new Map(deliveries.map((d) => [d.order_id || d.id, d]));
       const reordered: Delivery[] = [];
       for (const id of orderedIds) { const d = byId.get(id); if (d) { reordered.push(d); byId.delete(id); } }
       reordered.push(...byId.values());
@@ -251,6 +262,11 @@ export default function Queue() {
                   {prefix ? d.pickup.address : d.dropoff.address}
                 </span>
               </div>
+              {d.deadline && (
+                <div className="mt-2 text-xs text-slate-400">
+                  📅 {new Date(d.deadline).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </div>
+              )}
             </div>
             <div className="flex shrink-0 flex-col items-end gap-2">
               <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${priorityBadge(d.priority)}`}>
@@ -317,9 +333,16 @@ export default function Queue() {
               </>
             )}
             <button
+              onClick={() => setViewing(d)}
+              aria-label="View details"
+              className="flex min-h-[48px] w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-lg text-slate-600 active:scale-95 hover:bg-slate-200"
+            >
+              ℹ
+            </button>
+            <button
               onClick={() => navigate('/map')}
               aria-label="Open on map"
-              className="flex min-h-[48px] w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-lg text-slate-600 active:scale-95"
+              className="flex min-h-[48px] w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-lg text-slate-600 active:scale-95 hover:bg-slate-200"
             >
               🗺
             </button>
@@ -537,6 +560,12 @@ export default function Queue() {
           onClose={() => setFailing(null)}
           onConfirm={failDelivery}
           busy={busyId === failing.id}
+        />
+      )}
+      {viewing && (
+        <DetailModal
+          delivery={viewing}
+          onClose={() => setViewing(null)}
         />
       )}
     </div>

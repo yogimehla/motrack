@@ -15,7 +15,7 @@ export function createApp() {
   app.use(
     '*',
     cors({
-      origin: ['http://localhost:4011', 'http://localhost:4012'],
+      origin: ['http://localhost:3000', 'http://localhost:4011', 'http://localhost:4012'],
       credentials: true,
       allowHeaders: ['Content-Type', 'Authorization', 'X-MoInvoice-Key'],
       allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

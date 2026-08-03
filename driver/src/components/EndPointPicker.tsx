@@ -105,7 +105,6 @@ export default function EndPointPicker({
             type: 'raster',
             tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
             tileSize: 256,
-            attribution: '© OpenStreetMap contributors',
           },
         },
         layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
@@ -114,6 +113,7 @@ export default function EndPointPicker({
       zoom: hasPoint ? 14 : 12,
     });
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
     map.on('click', (e) => void setPointFromMap(e.lngLat.lat, e.lngLat.lng));
     mapRef.current = map;
     if (hasPoint) upsertMarker(draft.lat as number, draft.lon as number);
@@ -184,7 +184,7 @@ export default function EndPointPicker({
   };
 
   return (
-    <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="mt-4 mb-32 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="flex items-center gap-2">
         <span className="text-lg">🏠</span>
         <p className="text-sm font-semibold text-slate-700">End point (home)</p>
@@ -194,10 +194,24 @@ export default function EndPointPicker({
       </p>
 
       {draft.address && (
-        <p className="mt-2 truncate rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
-          📍 {draft.address}
-          {draft.plusCode ? <span className="text-slate-400"> · {draft.plusCode}</span> : null}
-        </p>
+        <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2">
+          <p className="truncate text-sm text-slate-600">
+            📍 {draft.address}
+            {draft.plusCode ? <span className="text-slate-400"> · {draft.plusCode}</span> : null}
+          </p>
+          <button
+            onClick={() => {
+              setDraft({ address: '', lat: null, lon: null, plusCode: '' });
+              if (markerRef.current) {
+                markerRef.current.remove();
+                markerRef.current = null;
+              }
+            }}
+            className="shrink-0 text-xs font-semibold text-red-600 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50"
+          >
+            Clear
+          </button>
+        </div>
       )}
 
       {/* Search — kept above the map so the Android keyboard doesn't cover it. */}
@@ -253,7 +267,7 @@ export default function EndPointPicker({
         disabled={saving || draft.lat == null || draft.lon == null}
         className="mt-3 min-h-[48px] w-full rounded-lg bg-indigo-700 font-semibold text-white shadow-sm active:scale-95 disabled:opacity-50"
       >
-        {saving ? 'Saving…' : 'Save end point'}
+        {saving ? 'Saving…' : draft.address && user.end_address === draft.address ? 'Update end point' : 'Save end point'}
       </button>
     </div>
   );

@@ -21,6 +21,7 @@ export type DeliveryStatus =
 
 export interface Delivery {
   id: string;
+  order_id?: string;
   pickup: Stop;
   dropoff: Stop;
   customer_name: string;
@@ -33,6 +34,7 @@ export interface Delivery {
   status: DeliveryStatus;
   assigned_driver_id?: string;
   fail_reason?: string;
+  created_at?: string;
   completed_at?: string;
   updated_at?: string;
 }

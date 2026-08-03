@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#FF6B6B</color>
+    <color name="primary_dark">#E74C3C</color>
+    <color name="accent">#3498DB</color>
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+    <color name="gray_light">#F5F5F5</color>
+    <color name="gray_medium">#999999</color>
+    <color name="gray_dark">#666666</color>
+    <color name="success">#27AE60</color>
+    <color name="error">#FF6B6B</color>
+    <color name="warning">#F39C12</color>
+</resources>

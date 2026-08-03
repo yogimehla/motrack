@@ -1,0 +1,45 @@
+# Gradle
+.gradle
+build/
+*.apk
+*.ap_
+*.aab
+
+# Android Studio
+.idea/
+*.iml
+*.iws
+*.ipr
+local.properties
+
+# Build files
+bin/
+gen/
+out/
+.externalNativeBuild/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# IDE
+.classpath
+.project
+.settings/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+
+# Lint
+lint-results.xml
+lint-results-*.html
+
+# Gradle wrapper
+!gradle/wrapper/gradle-wrapper.jar
+
+# NDK
+.ndkconfig

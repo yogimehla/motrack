@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MuulRoute Driver</string>
+
+    <!-- Login -->
+    <string name="email_hint">Email Address</string>
+    <string name="password_hint">Password</string>
+    <string name="login_button">Login</string>
+    <string name="no_account">Don\'t have an account?</string>
+    <string name="signup_link">Sign Up</string>
+
+    <!-- Dashboard -->
+    <string name="dashboard_title">Dashboard</string>
+    <string name="logout_button">Logout</string>
+    <string name="loading">Loading...</string>
+    <string name="pending_deliveries">Pending Deliveries</string>
+    <string name="available_deliveries">Available Deliveries</string>
+    <string name="no_deliveries">No deliveries available</string>
+    <string name="accept_delivery_button">Accept Delivery</string>
+
+    <!-- Delivery Details -->
+    <string name="delivery_details">Delivery Details</string>
+    <string name="order_info">Order Information</string>
+    <string name="pickup_location">Pickup Location</string>
+    <string name="delivery_location">Delivery Location</string>
+    <string name="decline_button">Decline</string>
+    <string name="accept_button">Accept</string>
+
+</resources>

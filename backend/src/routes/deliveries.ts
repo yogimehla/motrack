@@ -51,7 +51,7 @@ const feedbackSchema = z.object({
   comment: z.string().optional(),
 });
 const optimizeSchema = z.object({
-  delivery_ids: z.array(z.number().int()).min(1),
+  delivery_ids: z.array(z.union([z.number().int(), z.string()])).min(1),
   start: z.object({ lat: z.number(), lon: z.number() }),
   end: z.object({ lat: z.number(), lon: z.number() }).optional(),
 });
@@ -88,9 +88,11 @@ function getDelivery(id: number) {
 export function shapeDelivery(row: Record<string, unknown>) {
   const { pickup_address, pickup_lat, pickup_lon, pickup_plus_code,
           dropoff_address, dropoff_lat, dropoff_lon, dropoff_plus_code,
+          external_order_id,
           ...rest } = row;
   return {
     ...rest,
+    order_id: external_order_id,
     pickup: { address: pickup_address, lat: pickup_lat, lon: pickup_lon, plus_code: pickup_plus_code },
     dropoff: { address: dropoff_address, lat: dropoff_lat, lon: dropoff_lon, plus_code: dropoff_plus_code },
   };
@@ -108,7 +110,129 @@ function acceptedToday(driverId: number): number {
 }
 
 export const deliveriesRoutes = new Hono();
+
+// PWA-Billing: Create delivery from order (public endpoint, no auth)
+deliveriesRoutes.post('/from-pwa-billing', async (c) => {
+  const body = await c.req.json().catch(() => null);
+
+  // Validate required fields
+  if (!body || !body.orderId || !body.customer || !body.address ||
+      typeof body.lat !== 'number' || typeof body.lon !== 'number' ||
+      !body.storeName || typeof body.storeLat !== 'number' || typeof body.storeLon !== 'number') {
+    return fail(c, 'Missing required fields: orderId, customer, address, lat, lon, storeName, storeLat, storeLon');
+  }
+
+  const {
+    orderId, storeName, storeAddress, storeLat, storeLon,
+    customer, phone, address, lat, lon, total = 0, cod = false, items = 1, sharedAt
+  } = body;
+
+  // Set deadline to 24 hours from now
+  const now = new Date();
+  const deadline = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+  // Create delivery
+  const priority = cod ? 7 : 5;
+  const info = db
+    .prepare(
+      `INSERT INTO deliveries
+       (pickup_address, pickup_lat, pickup_lon, pickup_plus_code,
+        dropoff_address, dropoff_lat, dropoff_lon, dropoff_plus_code,
+        customer_name, customer_phone, cod_amount, weight_kg, priority,
+        deadline, status, source, external_order_id, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    )
+    .run(
+      storeName, storeLat, storeLon, plusEncode(storeLat, storeLon),
+      address, lat, lon, plusEncode(lat, lon),
+      customer, phone ?? null, cod ? total : null, items,
+      priority, deadline, 'pending',
+      'pwa_billing', orderId, new Date().toISOString()
+    );
+
+  const delivery = db.prepare('SELECT * FROM deliveries WHERE id = ?').get(info.lastInsertRowid) as Record<string, unknown>;
+  const shaped = shapeDelivery(delivery);
+  return ok(c, shaped, 201);
+});
+
+// Driver App: Get delivery details by ID (public endpoint for deep links)
+deliveriesRoutes.get('/:id/public', (c) => {
+  const id = Number(c.req.param('id'));
+  const row = db.prepare('SELECT * FROM deliveries WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  if (!row) return fail(c, 'Delivery not found', 404);
+  return ok(c, shapeDelivery(row));
+});
+
 deliveriesRoutes.use('*', requireAuth);
+
+// Deep link delivery (PWA to driver - create from URL params)
+deliveriesRoutes.get('/from-link', requireRole('driver'), (c) => {
+  const orderId = c.req.query('orderId');
+  const customer = c.req.query('customer');
+  const phone = c.req.query('phone');
+  const address = c.req.query('address');
+  const lat = c.req.query('lat');
+  const lon = c.req.query('lon');
+  const total = c.req.query('total');
+  const cod = c.req.query('cod');
+  const items = c.req.query('items');
+  const storeName = c.req.query('storeName');
+
+  // Validate required params
+  if (!orderId || !customer || !address || !lat || !lon) {
+    return fail(c, 'Missing required parameters: orderId, customer, address, lat, lon');
+  }
+
+  const user = getUser(c);
+  const driverId = user.id;
+
+  // Check if delivery with this orderId already exists
+  const existing = db
+    .prepare('SELECT * FROM deliveries WHERE external_order_id = ?')
+    .get(orderId) as Record<string, unknown> | undefined;
+
+  if (existing) {
+    return ok(c, shapeDelivery(existing));
+  }
+
+  // Create new delivery from URL parameters
+  const latNum = parseFloat(lat);
+  const lonNum = parseFloat(lon);
+  const totalNum = parseFloat(total ?? '0');
+  const isCod = cod === 'true';
+  const priority = isCod ? 7 : 5;
+
+  // Set pickup to store location (from URL or default)
+  const pickupAddress = storeName || 'Store';
+  const pickupLat = 30.75;
+  const pickupLon = 76.80;
+
+  // Set deadline to 24 hours from now
+  const now = new Date();
+  const deadline = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+  const info = db
+    .prepare(
+      `INSERT INTO deliveries
+       (pickup_address, pickup_lat, pickup_lon, pickup_plus_code,
+        dropoff_address, dropoff_lat, dropoff_lon, dropoff_plus_code,
+        customer_name, customer_phone, cod_amount, weight_kg, priority,
+        deadline, status, assigned_driver_id, source, external_order_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    )
+    .run(
+      pickupAddress, pickupLat, pickupLon, plusEncode(pickupLat, pickupLon),
+      address, latNum, lonNum, plusEncode(latNum, lonNum),
+      customer, phone ?? null, isCod ? totalNum : null, 1,
+      priority, deadline, 'assigned', driverId,
+      'deep_link', orderId
+    );
+
+  const delivery = db.prepare('SELECT * FROM deliveries WHERE id = ?').get(info.lastInsertRowid) as Record<string, unknown>;
+  const shaped = shapeDelivery(delivery) as Record<string, unknown>;
+  shaped.deadline = deadline;
+  return ok(c, shaped, 201);
+});
 
 // Create (dispatcher/admin)
 deliveriesRoutes.post('/', requireRole('dispatcher', 'admin'), async (c) => {
@@ -192,7 +316,10 @@ deliveriesRoutes.post('/:id/accept', requireRole('driver'), (c) => {
   const row = getDelivery(id);
   if (!row) return fail(c, 'Delivery not found', 404);
   const user = getUser(c);
-  if (row.assigned_driver_id !== user.id) return fail(c, 'Forbidden: not assigned to you', 403);
+  // Allow accept if: (1) already assigned to this driver, or (2) unassigned & pending (from PWA-Billing)
+  if (row.assigned_driver_id && row.assigned_driver_id !== user.id) {
+    return fail(c, 'Forbidden: already assigned to another driver', 403);
+  }
   if (row.status !== 'assigned' && row.status !== 'pending') {
     return fail(c, `Cannot accept delivery in status '${row.status}'`, 409);
   }
@@ -203,9 +330,10 @@ deliveriesRoutes.post('/:id/accept', requireRole('driver'), (c) => {
       402
     );
   }
+  // Auto-assign to driver if not already assigned (PWA-Billing deliveries)
   db.prepare(
-    "UPDATE deliveries SET status = 'driver_accepted', accepted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?"
-  ).run(id);
+    "UPDATE deliveries SET assigned_driver_id = ?, status = 'driver_accepted', accepted_at = datetime('now'), updated_at = datetime('now') WHERE id = ?"
+  ).run(user.id, id);
   return ok(c, shapeDelivery(getDelivery(id)!));
 });
 
@@ -287,16 +415,41 @@ deliveriesRoutes.post('/bulk', requireRole('dispatcher', 'admin'), async (c) => 
 // Optimize route
 deliveriesRoutes.post('/optimize', async (c) => {
   const parsed = optimizeSchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return fail(c, 'Body: {delivery_ids: number[], start: {lat, lon}}');
+  if (!parsed.success) return fail(c, 'Body: {delivery_ids: (number|string)[], start: {lat, lon}}');
   const { delivery_ids, start, end } = parsed.data;
-  const placeholders = delivery_ids.map(() => '?').join(',');
-  const rows = db
-    .prepare(`SELECT id, dropoff_lat, dropoff_lon FROM deliveries WHERE id IN (${placeholders})`)
-    .all(...delivery_ids) as { id: number; dropoff_lat: number; dropoff_lon: number }[];
+
+  // Separate numeric IDs from string order IDs
+  const numericIds = delivery_ids.filter((id) => typeof id === 'number') as number[];
+  const stringIds = delivery_ids.filter((id) => typeof id === 'string') as string[];
+
+  let rows: { id: number | string; dropoff_lat: number; dropoff_lon: number }[] = [];
+
+  // Fetch by numeric delivery IDs
+  if (numericIds.length > 0) {
+    const placeholders = numericIds.map(() => '?').join(',');
+    rows.push(
+      ...db
+        .prepare(`SELECT id, dropoff_lat, dropoff_lon FROM deliveries WHERE id IN (${placeholders})`)
+        .all(...numericIds) as { id: number; dropoff_lat: number; dropoff_lon: number }[]
+    );
+  }
+
+  // Fetch by string order IDs (external_order_id)
+  if (stringIds.length > 0) {
+    const placeholders = stringIds.map(() => '?').join(',');
+    const stringRows = db
+      .prepare(`SELECT id, external_order_id, dropoff_lat, dropoff_lon FROM deliveries WHERE external_order_id IN (${placeholders})`)
+      .all(...stringIds) as { id: number; external_order_id: string; dropoff_lat: number; dropoff_lon: number }[];
+    rows.push(
+      ...stringRows.map((r) => ({ id: r.external_order_id, dropoff_lat: r.dropoff_lat, dropoff_lon: r.dropoff_lon }))
+    );
+  }
+
   const missing = delivery_ids.filter((id) => !rows.some((r) => r.id === id));
   if (missing.length) return fail(c, `Unknown delivery ids: ${missing.join(', ')}`, 404);
+
   const result = optimizer.optimize(
-    rows.map((r) => ({ id: r.id, lat: r.dropoff_lat, lon: r.dropoff_lon })),
+    rows.map((r) => ({ id: String(r.id), lat: r.dropoff_lat, lon: r.dropoff_lon })),
     start,
     end
   );
