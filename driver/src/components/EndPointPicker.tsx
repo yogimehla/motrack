@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { api, errorMessage, unwrap } from '../api';
 import type { User } from '../types';
+import { OFFLINE_TILE_SOURCE } from '../offline/tiles';
 
 interface GeoResult {
   lat: number | string;
@@ -103,7 +104,7 @@ export default function EndPointPicker({
         sources: {
           osm: {
             type: 'raster',
-            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tiles: [OFFLINE_TILE_SOURCE],
             tileSize: 256,
           },
         },

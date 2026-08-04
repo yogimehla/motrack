@@ -57,6 +57,7 @@ export interface Region {
   name: string;
   version?: number | string;
   size_mb?: number;
+  size_bytes?: number;
   bounds?: number[];
   created_at?: string;
 }

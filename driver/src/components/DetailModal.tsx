@@ -8,7 +8,6 @@ interface DetailModalProps {
 export default function DetailModal({ delivery, onClose }: DetailModalProps) {
   if (!delivery) return null;
 
-  const closedAt = delivery.completed_at || delivery.updated_at;
   const statusColors: Record<string, string> = {
     assigned: 'bg-blue-100 text-blue-700',
     driver_accepted: 'bg-purple-100 text-purple-700',
@@ -88,7 +87,7 @@ export default function DetailModal({ delivery, onClose }: DetailModalProps) {
           {delivery.cod_amount != null && delivery.cod_amount > 0 && (
             <div className="bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200 rounded-xl p-4">
               <p className="text-xs font-semibold text-emerald-600 uppercase">💰 COD Amount</p>
-              <p className="text-3xl font-bold text-emerald-700 mt-2">₹{delivery.cod_amount}</p>
+              <p className="text-3xl font-bold text-emerald-700 mt-2">₹{delivery.cod_amount.toFixed(2)}</p>
             </div>
           )}
 

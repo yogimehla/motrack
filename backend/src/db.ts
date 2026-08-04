@@ -145,13 +145,7 @@ function seed() {
   const d2 = insUser.run('amit@muulroute.com', hash('driver123'), 'Amit Sharma', 'driver', 'free', '+91-9814011102').lastInsertRowid as number;
   insUser.run('vikram@muulroute.com', hash('driver123'), 'Vikram Singh', 'driver', 'pro', '+91-9814011103');
 
-  db.prepare('INSERT INTO regions (id, name, version, size_bytes, bounds) VALUES (?,?,?,?,?)').run(
-    'IN-CHD',
-    'Chandigarh',
-    4,
-    81788928, // ~78 MB
-    JSON.stringify([30.6, 76.6, 30.9, 76.9])
-  );
+  // Base regions are inserted idempotently by ensureRegions() on every boot.
 
   const insDel = db.prepare(`INSERT INTO deliveries
     (pickup_address, pickup_lat, pickup_lon, pickup_plus_code,
@@ -204,4 +198,26 @@ function seed() {
   console.log(`[db] seeded (admin id=${admin})`);
 }
 
+/**
+ * Idempotently ensure the known offline map regions exist. Unlike seed(), this
+ * runs on every boot (INSERT OR IGNORE), so regions added later appear in
+ * already-seeded databases without wiping data.
+ */
+function ensureRegions() {
+  const ins = db.prepare(
+    'INSERT OR IGNORE INTO regions (id, name, version, size_bytes, bounds) VALUES (?,?,?,?,?)'
+  );
+  const regions: [string, string, number, number, number[]][] = [
+    ['IN-CHD', 'Chandigarh', 4, 81788928, [30.6, 76.6, 30.9, 76.9]], // ~78 MB
+    ['IN-DEL', 'Delhi', 1, 214958080, [28.40, 76.83, 28.89, 77.35]], // ~205 MB, full NCT
+  ];
+  let added = 0;
+  for (const [id, name, version, size, bounds] of regions) {
+    const info = ins.run(id, name, version, size, JSON.stringify(bounds));
+    if (info.changes > 0) added++;
+  }
+  if (added > 0) console.log(`[db] ensured regions — added ${added} new`);
+}
+
 seed();
+ensureRegions();

@@ -178,8 +178,8 @@ export default function Queue() {
       const orderedIds = ((data.order || []) as unknown[]).map((o) =>
         typeof o === 'string' || typeof o === 'number' ? String(o) : String((o as { id?: string }).id),
       );
-      // Map by order_id first, fallback to id
-      const byId = new Map(deliveries.map((d) => [d.order_id || d.id, d]));
+      // Map by order_id first, fallback to id (string keys — optimizer returns ids as strings)
+      const byId = new Map(deliveries.map((d) => [String(d.order_id || d.id), d]));
       const reordered: Delivery[] = [];
       for (const id of orderedIds) { const d = byId.get(id); if (d) { reordered.push(d); byId.delete(id); } }
       reordered.push(...byId.values());
@@ -237,7 +237,7 @@ export default function Queue() {
   };
 
   const renderActiveCard = (d: Delivery) => {
-    const stopNo = optimizedOrder.get(d.id);
+    const stopNo = optimizedOrder.get(String(d.order_id || d.id));
     const started = ['picked_up', 'in_transit', 'near_destination'].includes(d.status);
     const prefix = d.status === 'assigned' || d.status === 'driver_accepted'; // heading to pickup first
     return (
@@ -290,7 +290,7 @@ export default function Queue() {
             </span>
             {d.cod_amount != null && d.cod_amount > 0 && (
               <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
-                COD ₹{d.cod_amount}
+                COD ₹{d.cod_amount.toFixed(2)}
               </span>
             )}
             {d.deadline && <Countdown deadline={d.deadline} />}
@@ -375,7 +375,7 @@ export default function Queue() {
         </div>
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
           {d.cod_amount != null && d.cod_amount > 0 && (
-            <span className="text-xs text-emerald-600">COD ₹{d.cod_amount}</span>
+            <span className="text-xs text-emerald-600">COD ₹{d.cod_amount.toFixed(2)}</span>
           )}
           {d.fail_reason && (
             <span className="text-xs text-red-500">Reason: {d.fail_reason}</span>

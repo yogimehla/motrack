@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { api, asList, unwrap } from '../api';
 import type { Delivery, Region, User } from '../types';
+import { OFFLINE_TILE_SOURCE } from '../offline/tiles';
 
 const ACTIVE_STATUSES = ['assigned', 'driver_accepted', 'picked_up', 'in_transit', 'near_destination'];
 
@@ -185,7 +186,7 @@ export default function MapPage() {
         sources: {
           osm: {
             type: 'raster',
-            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tiles: [OFFLINE_TILE_SOURCE],
             tileSize: 256,
           },
         },
